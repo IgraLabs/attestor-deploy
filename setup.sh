@@ -214,6 +214,8 @@ log "Configuration: OK"
 echo
 
 # --- Start ---
+# Stop any existing attestor container to avoid running with stale config
+docker compose down 2>/dev/null || true
 log "Starting attestor..."
 if ! docker compose up -d; then
     die "Failed to start attestor."
