@@ -6,7 +6,7 @@
 # Prerequisites: igra-orchestra must be running with the backend and frontend-w1 profiles.
 
 set -euo pipefail
-trap 'PRIVATE_KEY=; unset PRIVATE_KEY 2>/dev/null' EXIT INT TERM
+trap 'PRIVATE_KEY=; unset PRIVATE_KEY 2>/dev/null; CONTROLLER_PRIVATE_KEY=; unset CONTROLLER_PRIVATE_KEY 2>/dev/null' EXIT INT TERM
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -58,6 +58,21 @@ if [[ "$NETWORK" != "$SELECTED_NETWORK" ]]; then
     die "Existing .env has NETWORK=$NETWORK but you requested $SELECTED_NETWORK. Remove .env and re-run, or edit .env manually."
 fi
 
+# Check if template has a newer ATTESTOR_VERSION
+TEMPLATE_VERSION=$(grep '^ATTESTOR_VERSION=' "$ENV_TEMPLATE" | cut -d= -f2)
+if [[ -n "$TEMPLATE_VERSION" && "$TEMPLATE_VERSION" != "${ATTESTOR_VERSION:-}" ]]; then
+    echo "A new attestor version is available: ${TEMPLATE_VERSION} (current: ${ATTESTOR_VERSION:-unknown})"
+    read -r -p "Update to ${TEMPLATE_VERSION}? [Y/n]: " update_version
+    if [[ ! "$update_version" =~ ^[Nn] ]]; then
+        sed -i.bak "s/^ATTESTOR_VERSION=.*/ATTESTOR_VERSION=${TEMPLATE_VERSION}/" .env
+        rm -f .env.bak
+        ATTESTOR_VERSION="$TEMPLATE_VERSION"
+        log "Updated ATTESTOR_VERSION to ${ATTESTOR_VERSION}"
+    else
+        log "Keeping ATTESTOR_VERSION=${ATTESTOR_VERSION}"
+    fi
+fi
+
 # Verify orchestra network exists
 NETWORK_NAME="igra-orchestra-${NETWORK}_igra-network"
 if ! docker network inspect "$NETWORK_NAME" &>/dev/null; then
@@ -65,6 +80,63 @@ if ! docker network inspect "$NETWORK_NAME" &>/dev/null; then
 fi
 log "Orchestra network ($NETWORK_NAME): OK"
 echo
+
+# --- Attestation Mode ---
+echo "Attestation mode:"
+echo "  1) Direct    - Your private key is the registered attester"
+echo "  2) Delegated - A cold wallet delegates attestation to a hot wallet"
+echo
+read -r -p "Select mode [1]: " MODE_CHOICE
+MODE_CHOICE="${MODE_CHOICE:-1}"
+
+if [[ "$MODE_CHOICE" == "2" ]]; then
+    echo
+    echo "--- Delegated Attestation ---"
+    echo "The controller (cold wallet) must generate a delegation signature first."
+    echo "Run on the controller's machine:"
+    echo "  docker run --rm -it igranetwork/attestor:\${ATTESTOR_VERSION:-2.3.0} --sign-delegation"
+    echo
+
+    read -r -p "Controller address (0x...): " DELEGATION_CONTROLLER
+    [[ -z "$DELEGATION_CONTROLLER" ]] && die "Controller address cannot be empty."
+    [[ "$DELEGATION_CONTROLLER" =~ ^0x[0-9a-fA-F]{40}$ ]] || die "Invalid controller address format. Expected 0x followed by 40 hex characters."
+
+    read -r -p "Delegation expiry (block number): " DELEGATION_EXP
+    [[ -z "$DELEGATION_EXP" ]] && die "Delegation expiry cannot be empty."
+    [[ "$DELEGATION_EXP" =~ ^[0-9]+$ ]] || die "Delegation expiry must be a number."
+
+    read -r -p "Delegation signature (0x...): " DELEGATION_SIG
+    [[ -z "$DELEGATION_SIG" ]] && die "Delegation signature cannot be empty."
+
+    # Remove any existing delegation block from .env before writing
+    sed -i.bak '/^# --- Delegated Attestation ---$/,/^DELEGATION_SIGNATURE=/d' .env
+    # Also remove stray delegation vars that might exist without the header
+    sed -i.bak '/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
+    rm -f .env.bak
+    # Append delegation vars to .env
+    {
+        echo ""
+        echo "# --- Delegated Attestation ---"
+        echo "CONTROLLER_ADDRESS=${DELEGATION_CONTROLLER}"
+        echo "DELEGATION_EXPIRY=${DELEGATION_EXP}"
+        echo "DELEGATION_SIGNATURE=${DELEGATION_SIG}"
+    } >> .env
+    log "Delegation configuration saved to .env"
+    echo
+
+    KEY_LABEL="operator private key (hot wallet)"
+elif [[ "$MODE_CHOICE" == "1" ]]; then
+    # Remove any existing delegation config when switching to direct mode
+    sed -i.bak '/^# --- Delegated Attestation ---$/,/^DELEGATION_SIGNATURE=/d' .env
+    sed -i.bak '/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
+    rm -f .env.bak
+    log "Running in direct attestation mode"
+    echo
+
+    KEY_LABEL="attester private key"
+else
+    die "Invalid choice: $MODE_CHOICE. Expected 1 or 2."
+fi
 
 # --- Private Key ---
 mkdir -p secrets
@@ -77,7 +149,7 @@ if [[ -f secrets/private_key.txt ]]; then
         log "Keeping existing key"
     else
         if [[ -t 0 ]]; then
-            read -r -s -p "Enter your attester private key: " PRIVATE_KEY
+            read -r -s -p "Enter your ${KEY_LABEL}: " PRIVATE_KEY
             echo
         else
             read -r PRIVATE_KEY
@@ -90,7 +162,7 @@ if [[ -f secrets/private_key.txt ]]; then
         unset PRIVATE_KEY
     fi
 else
-    echo "Enter the private key for your attester account."
+    echo "Enter your ${KEY_LABEL}."
     echo "This will be stored in secrets/private_key.txt (permissions 600)."
     echo
     if [[ -t 0 ]]; then
@@ -108,6 +180,39 @@ else
 fi
 echo
 
+# --- Validate Configuration ---
+log "Validating configuration..."
+ATTESTOR_IMAGE="igranetwork/attestor:${ATTESTOR_VERSION:-latest}"
+
+# Re-source .env to pick up delegation vars
+set -a
+# shellcheck source=/dev/null
+source .env
+set +a
+
+VALIDATE_ENV=(
+    -e "RPC_URL=${RPC_URL:-http://rpc-provider-0:8535}"
+    -e "CONTRACT_ADDRESS=${CONTRACT_ADDRESS}"
+    -e "CHAIN_ID=${CHAIN_ID}"
+    -e "PRIVATE_KEY=$(cat secrets/private_key.txt)"
+    -e "HEALTH_PORT=${HEALTH_PORT:-8180}"
+    -e "METRICS_PORT=${METRICS_PORT:-9190}"
+)
+
+if [[ -n "${CONTROLLER_ADDRESS:-}" ]]; then
+    VALIDATE_ENV+=(
+        -e "CONTROLLER_ADDRESS=${CONTROLLER_ADDRESS}"
+        -e "DELEGATION_EXPIRY=${DELEGATION_EXPIRY}"
+        -e "DELEGATION_SIGNATURE=${DELEGATION_SIGNATURE}"
+    )
+fi
+
+if ! docker run --rm --network "$NETWORK_NAME" "${VALIDATE_ENV[@]}" "$ATTESTOR_IMAGE" --check; then
+    die "Configuration validation failed. Check the values above and try again."
+fi
+log "Configuration: OK"
+echo
+
 # --- Start ---
 log "Starting attestor..."
 if ! docker compose up -d; then
@@ -122,6 +227,7 @@ echo
 echo "Useful commands:"
 echo "  docker compose logs -f              # Follow logs"
 echo "  curl -s localhost:${HEALTH_PORT:-8180} | jq          # Health status"
+echo "  curl -s localhost:${HEALTH_PORT:-8180} | jq .mode    # Check attestation mode"
 echo "  curl -s localhost:${METRICS_PORT:-9190} | jq          # Metrics"
 echo "  curl -s localhost:${METRICS_PORT:-9190}/prometheus    # Prometheus metrics"
 echo "  docker compose down                 # Stop attestor"

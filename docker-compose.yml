@@ -12,6 +12,9 @@ services:
       - LOG_DIR=/app/logs
       - RUST_LOG=${RUST_LOG:-igra_attestation=info}
       - REORG_SAFETY_BLOCKS=${REORG_SAFETY_BLOCKS:-30}
+      - CONTROLLER_ADDRESS=${CONTROLLER_ADDRESS:-}
+      - DELEGATION_EXPIRY=${DELEGATION_EXPIRY:-}
+      - DELEGATION_SIGNATURE=${DELEGATION_SIGNATURE:-}
     secrets:
       - private_key
     ports:
@@ -27,7 +30,11 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${HEALTH_PORT:-8180}/ || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${HEALTH_PORT:-8180}/ || exit 1",
+        ]
       interval: 15s
       timeout: 3s
       retries: 3
