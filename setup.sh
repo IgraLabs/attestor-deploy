@@ -187,7 +187,7 @@ if [[ -f secrets/private_key.txt ]]; then
         fi
         [[ -z "$PRIVATE_KEY" ]] && die "Private key cannot be empty."
         printf '%s' "$PRIVATE_KEY" > secrets/private_key.txt
-        chmod 600 secrets/private_key.txt
+        chmod 644 secrets/private_key.txt
         log "Private key saved"
         PRIVATE_KEY=""
         unset PRIVATE_KEY
