@@ -81,6 +81,39 @@ fi
 log "Orchestra network ($NETWORK_NAME): OK"
 echo
 
+# --- RPC Endpoint ---
+if [[ -n "${RPC_URL:-}" ]]; then
+    log "RPC endpoint: $RPC_URL"
+    read -r -p "Change RPC endpoint? [y/N]: " change_rpc
+    if [[ "$change_rpc" =~ ^[Yy] ]]; then
+        read -r -p "RPC endpoint (e.g. https://your-domain.com:8545): " NEW_RPC_URL
+        [[ -z "$NEW_RPC_URL" ]] && die "RPC endpoint cannot be empty."
+        RPC_URL="$NEW_RPC_URL"
+        if grep -q '^RPC_URL=' .env; then
+            sed -i.bak "s|^RPC_URL=.*|RPC_URL=${RPC_URL}|" .env
+        else
+            echo "RPC_URL=${RPC_URL}" >> .env
+        fi
+        rm -f .env.bak
+        log "Updated RPC_URL=$RPC_URL"
+    fi
+else
+    echo "Enter your Traefik RPC endpoint."
+    echo "This is your igra-orchestra domain on port 8545."
+    echo "Example: https://your-domain.com:8545"
+    echo
+    read -r -p "RPC endpoint: " RPC_URL
+    [[ -z "$RPC_URL" ]] && die "RPC endpoint cannot be empty."
+    if grep -q '^RPC_URL=' .env; then
+        sed -i.bak "s|^RPC_URL=.*|RPC_URL=${RPC_URL}|" .env
+    else
+        echo "RPC_URL=${RPC_URL}" >> .env
+    fi
+    rm -f .env.bak
+    log "Saved RPC_URL=$RPC_URL"
+fi
+echo
+
 # --- Attestation Mode ---
 echo "Attestation mode:"
 echo "  1) Direct    - Your private key is the registered attester"
@@ -94,7 +127,7 @@ if [[ "$MODE_CHOICE" == "2" ]]; then
     echo "--- Delegated Attestation ---"
     echo "The controller (cold wallet) must generate a delegation signature first."
     echo "Run on the controller's machine:"
-    echo "  docker run --rm -it igranetwork/attestor:\${ATTESTOR_VERSION:-2.3.0} --sign-delegation"
+    echo "  docker run --rm -it igranetwork/attestor:${ATTESTOR_VERSION:-latest} --sign-delegation"
     echo
 
     read -r -p "Controller address (0x...): " DELEGATION_CONTROLLER
@@ -107,11 +140,10 @@ if [[ "$MODE_CHOICE" == "2" ]]; then
 
     read -r -p "Delegation signature (0x...): " DELEGATION_SIG
     [[ -z "$DELEGATION_SIG" ]] && die "Delegation signature cannot be empty."
+    [[ "$DELEGATION_SIG" =~ ^0x[0-9a-fA-F]{130}$ ]] || die "Invalid signature format. Expected 0x followed by 130 hex characters (65 bytes)."
 
-    # Remove any existing delegation block from .env before writing
-    sed -i.bak '/^# --- Delegated Attestation ---$/,/^DELEGATION_SIGNATURE=/d' .env
-    # Also remove stray delegation vars that might exist without the header
-    sed -i.bak '/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
+    # Remove any existing delegation vars from .env before writing
+    sed -i.bak '/^# --- Delegated Attestation ---$/d;/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
     rm -f .env.bak
     # Append delegation vars to .env
     {
@@ -127,8 +159,7 @@ if [[ "$MODE_CHOICE" == "2" ]]; then
     KEY_LABEL="operator private key (hot wallet)"
 elif [[ "$MODE_CHOICE" == "1" ]]; then
     # Remove any existing delegation config when switching to direct mode
-    sed -i.bak '/^# --- Delegated Attestation ---$/,/^DELEGATION_SIGNATURE=/d' .env
-    sed -i.bak '/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
+    sed -i.bak '/^# --- Delegated Attestation ---$/d;/^CONTROLLER_ADDRESS=/d;/^DELEGATION_EXPIRY=/d;/^DELEGATION_SIGNATURE=/d' .env
     rm -f .env.bak
     log "Running in direct attestation mode"
     echo
@@ -191,10 +222,9 @@ source .env
 set +a
 
 VALIDATE_ENV=(
-    -e "RPC_URL=${RPC_URL:-http://rpc-provider-0:8535}"
+    -e "RPC_URL=${RPC_URL}"
     -e "CONTRACT_ADDRESS=${CONTRACT_ADDRESS}"
     -e "CHAIN_ID=${CHAIN_ID}"
-    -e "PRIVATE_KEY=$(cat secrets/private_key.txt)"
     -e "HEALTH_PORT=${HEALTH_PORT:-8180}"
     -e "METRICS_PORT=${METRICS_PORT:-9190}"
 )
@@ -207,7 +237,9 @@ if [[ -n "${CONTROLLER_ADDRESS:-}" ]]; then
     )
 fi
 
-if ! docker run --rm --network "$NETWORK_NAME" "${VALIDATE_ENV[@]}" "$ATTESTOR_IMAGE" --check; then
+if ! docker run --rm --network "$NETWORK_NAME" \
+    -v "$(pwd)/secrets/private_key.txt:/run/secrets/private_key:ro" \
+    "${VALIDATE_ENV[@]}" "$ATTESTOR_IMAGE" --check; then
     die "Configuration validation failed. Check the values above and try again."
 fi
 log "Configuration: OK"

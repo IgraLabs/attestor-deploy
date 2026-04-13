@@ -22,8 +22,8 @@ The script will:
 
 1. Create `.env` from the network-specific template
 2. Verify the igra-orchestra Docker network is running
-3. Prompt for your attester private key (stored in `secrets/private_key.txt`)
-4. Ask whether to run in **direct** or **delegated** attestation mode
+3. Ask whether to run in **direct** or **delegated** attestation mode
+4. Prompt for your private key (stored in `secrets/private_key.txt`)
 5. Validate configuration and RPC connectivity
 6. Start the attestor container
 
@@ -57,14 +57,30 @@ Delegation lets a cold wallet (controller) authorize a hot wallet (operator) to 
 
 On the controller's machine (where the cold wallet key is available):
 
+1. Create a temporary env file (this keeps the private key out of shell history and `ps aux`):
+
 ```bash
-docker run --rm -it \
-  -e CONTROLLER_PRIVATE_KEY=0xYOUR_COLD_WALLET_KEY \
-  -e OPERATOR_ADDRESS=0xYOUR_HOT_WALLET_ADDRESS \
-  -e DELEGATION_EXPIRY=999999999 \
-  -e CHAIN_ID=38836 \
-  -e CONTRACT_ADDRESS=0xc24Df70E408739aeF6bF594fd41db4632dF49188 \
+cat > delegation.env << 'EOF'
+CONTROLLER_PRIVATE_KEY=0xYOUR_COLD_WALLET_KEY
+OPERATOR_ADDRESS=0xYOUR_HOT_WALLET_ADDRESS
+DELEGATION_EXPIRY=999999999
+CHAIN_ID=38836
+CONTRACT_ADDRESS=0xc24Df70E408739aeF6bF594fd41db4632dF49188
+EOF
+chmod 600 delegation.env
+```
+
+2. Run the signing container:
+
+```bash
+docker run --rm -it --env-file delegation.env \
   igranetwork/attestor:2.3.1 --sign-delegation
+```
+
+3. Delete the temporary file immediately:
+
+```bash
+rm delegation.env
 ```
 
 | Variable                 | Description                                                                                 |

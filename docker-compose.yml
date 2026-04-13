@@ -4,7 +4,7 @@ services:
     container_name: attestor
     restart: unless-stopped
     environment:
-      - RPC_URL=${RPC_URL:-http://rpc-provider-0:8535}
+      - RPC_URL=${RPC_URL}
       - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
       - CHAIN_ID=${CHAIN_ID}
       - HEALTH_PORT=${HEALTH_PORT:-8180}
