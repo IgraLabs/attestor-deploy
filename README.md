@@ -24,8 +24,10 @@ The script will:
 2. Verify the igra-orchestra Docker network is running
 3. Ask whether to run in **direct** or **delegated** attestation mode
 4. Prompt for your private key (stored in `secrets/private_key.txt`)
-5. Validate configuration and RPC connectivity
-6. Start the attestor container
+5. Ensure `logs/` directory has correct ownership for the container
+6. Pull the latest attestor image
+7. Validate configuration and RPC connectivity
+8. Start the attestor container
 
 ## Management
 
@@ -43,7 +45,7 @@ Edit `.env` after setup to change optional settings:
 
 | Variable              | Default                 | Description                     |
 | --------------------- | ----------------------- | ------------------------------- |
-| `ATTESTOR_VERSION`    | `2.3.0`                 | Docker image tag                |
+| `ATTESTOR_VERSION`    | `latest`                | Docker image tag                |
 | `HEALTH_PORT`         | `8180`                  | Health endpoint port            |
 | `METRICS_PORT`        | `9190`                  | Metrics endpoint port           |
 | `RUST_LOG`            | `igra_attestation=info` | Log level                       |
