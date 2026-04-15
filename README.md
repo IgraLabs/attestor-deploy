@@ -45,7 +45,7 @@ Edit `.env` after setup to change optional settings:
 
 | Variable              | Default                 | Description                     |
 | --------------------- | ----------------------- | ------------------------------- |
-| `ATTESTOR_VERSION`    | `latest`                | Docker image tag                |
+| `ATTESTOR_VERSION`    | `2.3.2`                 | Docker image tag                |
 | `HEALTH_PORT`         | `8180`                  | Health endpoint port            |
 | `METRICS_PORT`        | `9190`                  | Metrics endpoint port           |
 | `RUST_LOG`            | `igra_attestation=info` | Log level                       |
