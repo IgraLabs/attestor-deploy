@@ -178,6 +178,9 @@ if [[ -f secrets/private_key.txt ]]; then
     read -r -p "Overwrite with a new key? [y/N]: " overwrite
     if [[ ! "$overwrite" =~ ^[Yy] ]]; then
         log "Keeping existing key"
+        # Ensure permissions are compatible with non-root container (uid=1000)
+        chown 1000:1000 secrets/private_key.txt 2>/dev/null || true
+        chmod 640 secrets/private_key.txt
     else
         if [[ -t 0 ]]; then
             read -r -s -p "Enter your ${KEY_LABEL}: " PRIVATE_KEY
@@ -187,14 +190,15 @@ if [[ -f secrets/private_key.txt ]]; then
         fi
         [[ -z "$PRIVATE_KEY" ]] && die "Private key cannot be empty."
         printf '%s' "$PRIVATE_KEY" > secrets/private_key.txt
-        chmod 644 secrets/private_key.txt
+        chown 1000:1000 secrets/private_key.txt 2>/dev/null || true
+        chmod 640 secrets/private_key.txt
         log "Private key saved"
         PRIVATE_KEY=""
         unset PRIVATE_KEY
     fi
 else
     echo "Enter your ${KEY_LABEL}."
-    echo "This will be stored in secrets/private_key.txt (permissions 600)."
+    echo "This will be stored in secrets/private_key.txt (permissions 640)."
     echo
     if [[ -t 0 ]]; then
         read -r -s -p "Private key: " PRIVATE_KEY
@@ -204,16 +208,31 @@ else
     fi
     [[ -z "$PRIVATE_KEY" ]] && die "Private key cannot be empty."
     printf '%s' "$PRIVATE_KEY" > secrets/private_key.txt
-    chmod 644 secrets/private_key.txt
+    chown 1000:1000 secrets/private_key.txt 2>/dev/null || true
+    chmod 640 secrets/private_key.txt
     log "Private key saved"
     PRIVATE_KEY=""
     unset PRIVATE_KEY
 fi
 echo
 
+# --- Logs directory ---
+mkdir -p logs
+chmod 755 logs
+if ! chown 1000:1000 logs 2>/dev/null; then
+    echo "Warning: Could not change ownership of logs/ to UID 1000 (container user)."
+    echo "If log writing fails, run: sudo chown 1000:1000 logs/"
+fi
+echo
+
 # --- Validate Configuration ---
 log "Validating configuration..."
 ATTESTOR_IMAGE="igranetwork/attestor:${ATTESTOR_VERSION:-latest}"
+
+log "Pulling latest image: $ATTESTOR_IMAGE"
+if ! docker pull "$ATTESTOR_IMAGE"; then
+    die "Failed to pull $ATTESTOR_IMAGE. Check your internet connection and that the image exists."
+fi
 
 # Re-source .env to pick up delegation vars
 set -a
