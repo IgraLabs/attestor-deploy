@@ -229,10 +229,8 @@ echo
 log "Validating configuration..."
 ATTESTOR_IMAGE="igranetwork/attestor:${ATTESTOR_VERSION:-latest}"
 
-log "Pulling latest image: $ATTESTOR_IMAGE"
-if ! docker pull "$ATTESTOR_IMAGE"; then
-    die "Failed to pull $ATTESTOR_IMAGE. Check your internet connection and that the image exists."
-fi
+log "Pulling image: $ATTESTOR_IMAGE"
+docker pull "$ATTESTOR_IMAGE" || die "Failed to pull $ATTESTOR_IMAGE"
 
 # Re-source .env to pick up delegation vars
 set -a
